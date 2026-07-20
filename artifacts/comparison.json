@@ -1,0 +1,44 @@
+{
+  "config": {
+    "events": 30000,
+    "latency": 3,
+    "quote_interval": 20,
+    "seed": 31
+  },
+  "drawdown_reduction": 0.7660343168215893,
+  "fixed_spread": {
+    "cancels": 2965,
+    "ending_inventory": -15,
+    "events": 30000,
+    "filled_quantity": 69,
+    "fills": 48,
+    "final_pnl_ticks": 848.637999999919,
+    "inventory_rms": 12.432306034414264,
+    "max_abs_inventory": 21,
+    "max_drawdown_ticks": 531.9840000000404,
+    "mean_20_event_markout_ticks": -0.23958333333333334,
+    "pnl_path_ratio_100_event": 3.165811797782912,
+    "post_only_rejections": 0,
+    "quote_acceptance_rate": 1.0,
+    "quotes_sent": 3000,
+    "strategy": "fixed_spread"
+  },
+  "inventory_aware": {
+    "cancels": 2969,
+    "ending_inventory": -6,
+    "events": 30000,
+    "filled_quantity": 62,
+    "fills": 42,
+    "final_pnl_ticks": 99.12400000001799,
+    "inventory_rms": 4.651408388864603,
+    "max_abs_inventory": 8,
+    "max_drawdown_ticks": 124.46599999999307,
+    "mean_20_event_markout_ticks": -0.30952380952380953,
+    "pnl_path_ratio_100_event": 1.6109255300489356,
+    "post_only_rejections": 0,
+    "quote_acceptance_rate": 1.0,
+    "quotes_sent": 3000,
+    "strategy": "inventory_aware"
+  },
+  "inventory_risk_reduction": 0.6190476190476191
+}
