@@ -6,7 +6,7 @@ import json
 import sys
 
 from .experiment import ExperimentConfig, run_comparison
-from .feeds.recorder import capture_coinbase, summary_json
+from .feeds.kraken_recorder import capture_kraken, summary_json
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,11 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     simulate.add_argument("--quote-interval", type=int, default=20)
     simulate.add_argument("--latency", type=int, default=3)
     simulate.add_argument("--output", default="artifacts")
-    capture = subparsers.add_parser("capture", help="record the public Coinbase L2 feed")
-    capture.add_argument("--product", default="BTC-USD")
+    capture = subparsers.add_parser("capture", help="record the public Kraken L2 feed")
+    capture.add_argument("--symbol", default="BTC/USD")
+    capture.add_argument("--depth", type=int, default=10)
     capture.add_argument("--events", type=int, default=5_000)
     capture.add_argument("--seconds", type=float, default=60.0)
-    capture.add_argument("--output", default="captures/coinbase-btc-usd.jsonl.gz")
+    capture.add_argument("--output", default="captures/kraken-btc-usd.jsonl.gz")
     args = parser.parse_args(argv)
 
     if args.command == "simulate":
@@ -41,9 +42,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         result = asyncio.run(
-            capture_coinbase(
+            capture_kraken(
                 args.output,
-                product_id=args.product,
+                symbol=args.symbol,
+                depth=args.depth,
                 max_events=args.events,
                 duration_seconds=args.seconds,
             )
