@@ -7,11 +7,12 @@ import sys
 
 from .experiment import ExperimentConfig, run_comparison
 from .feeds.kraken_recorder import capture_kraken, summary_json
+from .replay import replay_kraken_capture
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] not in {"simulate", "capture"}:
+    if not argv or argv[0] not in {"simulate", "capture", "replay"}:
         argv.insert(0, "simulate")
     parser = argparse.ArgumentParser(description="Run queue-aware market-making experiments")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -27,6 +28,11 @@ def main(argv: list[str] | None = None) -> int:
     capture.add_argument("--events", type=int, default=5_000)
     capture.add_argument("--seconds", type=float, default=60.0)
     capture.add_argument("--output", default="captures/kraken-btc-usd.jsonl.gz")
+    replay = subparsers.add_parser("replay", help="validate and analyze a Kraken capture")
+    replay.add_argument("capture")
+    replay.add_argument("--symbol", default="BTC/USD")
+    replay.add_argument("--depth", type=int, default=10)
+    replay.add_argument("--output", default="artifacts/kraken_replay.json")
     args = parser.parse_args(argv)
 
     if args.command == "simulate":
@@ -40,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output,
         )
         print(json.dumps(result, indent=2, sort_keys=True))
-    else:
+    elif args.command == "capture":
         result = asyncio.run(
             capture_kraken(
                 args.output,
@@ -51,4 +57,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         print(summary_json(result), end="")
+    else:
+        result = replay_kraken_capture(
+            args.capture,
+            symbol=args.symbol,
+            depth=args.depth,
+            output=args.output,
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
     return 0

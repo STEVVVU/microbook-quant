@@ -120,6 +120,33 @@ def event_to_dict(event: KrakenEvent) -> dict[str, Any]:
     return asdict(event)
 
 
+def event_from_dict(payload: dict[str, Any]) -> KrakenEvent:
+    kind = payload["kind"]
+    if kind in {"snapshot", "update"}:
+        event_type = KrakenSnapshot if kind == "snapshot" else KrakenUpdate
+        return event_type(
+            kind=kind,
+            symbol=payload["symbol"],
+            received_ns=int(payload["received_ns"]),
+            exchange_ns=int(payload["exchange_ns"]),
+            bids=tuple(KrakenLevel(**level) for level in payload["bids"]),
+            asks=tuple(KrakenLevel(**level) for level in payload["asks"]),
+            checksum=int(payload["checksum"]),
+        )
+    if kind == "trade":
+        return KrakenTrade(
+            kind="trade",
+            symbol=payload["symbol"],
+            received_ns=int(payload["received_ns"]),
+            exchange_ns=int(payload["exchange_ns"]),
+            trade_id=int(payload["trade_id"]),
+            price_ticks=int(payload["price_ticks"]),
+            quantity=payload["quantity"],
+            aggressor_side=payload["aggressor_side"],
+        )
+    raise ValueError(f"unsupported Kraken event kind {kind!r}")
+
+
 def _checksum_text(value: Decimal) -> str:
     return format(value, "f").replace(".", "").lstrip("0") or "0"
 
@@ -209,4 +236,8 @@ class KrakenBook:
         if self.best_bid is not None and self.best_ask is not None:
             if self.best_bid >= self.best_ask:
                 raise AssertionError("reconstructed book is crossed")
+
+    def depth(self, side: Literal["buy", "sell"]) -> Decimal:
+        book = self.bids if side == "buy" else self.asks
+        return sum(book.values(), start=Decimal(0))
 
