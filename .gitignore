@@ -10,3 +10,5 @@ captures/
 artifacts/*
 !artifacts/.gitkeep
 !artifacts/comparison.json
+!artifacts/kraken_l2_sample.jsonl.gz
+!artifacts/kraken_replay.json

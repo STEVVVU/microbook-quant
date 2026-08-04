@@ -1,0 +1,33 @@
+{
+  "capture": {
+    "depth": 10,
+    "duration_seconds": 89.4542592,
+    "path": "artifacts\\kraken_l2_sample.jsonl.gz",
+    "sha256": "97bd818113f75a9d44517969d64c72e08ba0bacb3a749f420e8fbdbf6cbf979e",
+    "symbol": "BTC/USD"
+  },
+  "integrity": {
+    "checksums_verified": 1807,
+    "crossed_book_states": 0,
+    "events": 1829,
+    "snapshots": 1,
+    "trades": 22,
+    "updates": 1806
+  },
+  "market": {
+    "aggressor_buy_trades": 9,
+    "aggressor_sell_trades": 13,
+    "depth_imbalance_mean": -0.5335132040751039,
+    "latency_ms_p50": 79.30282,
+    "latency_ms_p95": 94.5170672,
+    "midpoint_change_rms_ticks": 2.0416483037572295,
+    "spread_ticks_max": 117.0,
+    "spread_ticks_mean": 2.1394576646375207,
+    "spread_ticks_p50": 1.0,
+    "spread_ticks_p95": 1.0,
+    "top_of_book_changes": 12,
+    "traded_notional_usd": 8533.146950703,
+    "traded_quantity": 0.13212592,
+    "updates_per_second": 20.18908899532869
+  }
+}
