@@ -29,15 +29,15 @@ carried, and whether a fill was followed by adverse price movement.
 
 ## Resume highlights
 
-- Built a deterministic price-time-priority matching engine supporting FIFO
-  queues, partial fills, market orders, post-only rejection, and owner-checked
-  cancellation.
-- Engineered a public Kraken v2 feed handler that recorded and replayed **1,829
-  real BTC/USD L2/trade events**, verified **1,807 exchange CRC32s**, and
-  observed zero crossed-book states.
-- Developed latency- and queue-aware market-making research that reduced peak
-  inventory by **61.9%** and simulated maximum drawdown by **76.6%** over a
-  paired 30,000-event experiment.
+- Built a deterministic exchange simulator with price-time priority, FIFO
+  queues, partial fills, market orders, cancellations, and post-only checks.
+- Integrated Kraken's public BTC/USD feed and replayed **1,829 real L2 and
+  trade events** with **1,807 verified checksums** and zero crossed-book states.
+- Modeled queue position, order latency, maker rebates, inventory exposure,
+  drawdown, and post-fill price movement instead of assuming instant fills.
+- Compared two market-making policies over 30,000 seeded events; the
+  inventory-aware policy reduced peak inventory by **61.9%** and simulated
+  maximum drawdown by **76.6%**.
 
 ## Real-feed evidence
 
