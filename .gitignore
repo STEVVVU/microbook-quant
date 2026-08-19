@@ -12,3 +12,8 @@ artifacts/*
 !artifacts/comparison.json
 !artifacts/kraken_l2_sample.jsonl.gz
 !artifacts/kraken_replay.json
+# Committed figures are small and are the point of the artifacts directory.
+!artifacts/*.png
+# Parquet is a regenerable analysis-side copy of the JSONL capture. Keep it out of
+# git: the gzip JSONL is the authoritative record and parquet can be rebuilt from it.
+*.parquet

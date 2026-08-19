@@ -4,7 +4,6 @@ import pytest
 
 from microbook.feeds.kraken import KrakenBook, KrakenSnapshot, KrakenUpdate, parse_kraken_message
 
-
 SNAPSHOT = {
     "channel": "book",
     "type": "snapshot",

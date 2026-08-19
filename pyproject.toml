@@ -7,10 +7,22 @@ name = "microbook-quant"
 version = "0.1.0"
 description = "Price-time matching, checksum-verified L2 capture, and market-making research"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Portfolio Project" }]
 keywords = ["quantitative-finance", "market-microstructure", "backtesting", "order-book"]
+
+# Runtime dependencies cover the ANALYSIS layer only. The matching engine in
+# src/microbook/book.py and the simulator event loop stay pure-stdlib integer
+# arithmetic on purpose -- read "Numerics: integers in the book, numpy in the
+# analysis" in the README before adding a numeric dependency to that path.
+dependencies = [
+    "numpy>=2.1",
+    "pandas>=2.2",
+    "pyarrow>=17",
+    "matplotlib>=3.9",
+    "scipy>=1.14",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
@@ -28,4 +40,12 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
+
+# Pinned explicitly rather than relying on ruff's defaults, which widen between
+# releases: an unpinned `ruff check .` passed locally and failed in CI on a newer
+# ruff. E4/E7/E9 + F is the pycodestyle/pyflakes core, E501 enforces the
+# line-length set above, I adds import ordering, W catches trailing whitespace,
+# NPY flags legacy numpy patterns in the new analysis layer.
+[tool.ruff.lint]
+select = ["E4", "E5", "E7", "E9", "F", "I", "W", "NPY"]
