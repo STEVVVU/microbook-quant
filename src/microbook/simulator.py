@@ -1,4 +1,12 @@
-"""Latency- and queue-aware synthetic exchange simulation."""
+"""Latency- and queue-aware synthetic exchange simulation.
+
+The event loop below is intentionally scalar and integer-typed: prices are
+integer ticks, sizes are integer lots, and events are sequenced one at a time
+because price-time priority and queue position are order-dependent. Aggregation
+of what this loop *records* is vectorized in :mod:`microbook.analytics`; see the
+module docstring there for the full integer-in-the-book / numpy-in-the-analysis
+rationale.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +14,9 @@ import math
 import random
 import statistics
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from . import analytics
 from .book import Fill, LimitOrderBook, Order, Side
 from .strategy import FixedSpread, InventoryAware
 
@@ -37,6 +46,50 @@ class PendingMarkout:
     due_at: int
     side: Side
     fill_price: int
+    order_id: int
+    fill_event: int
+
+
+@dataclass
+class QuoteRecord:
+    """Per-quote outcome, in integer ticks and lots, for the analytics layer.
+
+    ``queue_ahead_lots`` is the resting quantity in front of this order in its
+    FIFO queue at the moment it was accepted -- the quantity that has to trade
+    before this order can. It is captured here (not reconstructed later) because
+    it is only knowable at submit time.
+    """
+
+    order_id: int
+    side: str
+    price_ticks: int
+    submitted_event: int
+    queue_ahead_lots: int
+    size_lots: int
+    filled_lots: int = 0
+    cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class MarkoutRecord:
+    """A resolved markout: signed midpoint drift in ticks after a maker fill."""
+
+    order_id: int
+    side: str
+    fill_price_ticks: int
+    fill_event: int
+    markout_ticks: float
+
+
+@dataclass
+class SimulationResult:
+    """Scalar metrics plus the raw curves and records the analytics layer reduces."""
+
+    metrics: dict[str, float | int | str]
+    pnl_curve: list[float] = field(default_factory=list)
+    inventory_curve: list[int] = field(default_factory=list)
+    quotes: list[QuoteRecord] = field(default_factory=list)
+    markouts: list[MarkoutRecord] = field(default_factory=list)
 
 
 class MarketSimulator:
@@ -59,6 +112,11 @@ class MarketSimulator:
         self.pnl_curve: list[float] = []
         self.inventory_curve: list[int] = []
         self.markouts: list[float] = []
+        # Per-quote and per-markout records feed the vectorized analytics layer.
+        # They are appended, never aggregated here, so the event loop stays exact.
+        self.quote_records: list[QuoteRecord] = []
+        self.markout_records: list[MarkoutRecord] = []
+        self._quotes_by_order: dict[int, QuoteRecord] = {}
         self.fills = 0
         self.filled_quantity = 0
         self.quotes_sent = 0
@@ -94,10 +152,19 @@ class MarketSimulator:
         self.cash += self.config.maker_rebate * fill.quantity
         self.fills += 1
         self.filled_quantity += fill.quantity
+        record = self._quotes_by_order.get(fill.maker_order_id)
+        if record is not None:
+            record.filled_lots += fill.quantity
         if fill.maker_order_id not in self.book.orders:
             self.agent_orders.discard(fill.maker_order_id)
         self.pending_markouts.append(
-            PendingMarkout(event + self.config.markout_horizon, fill.maker_side, fill.price)
+            PendingMarkout(
+                event + self.config.markout_horizon,
+                fill.maker_side,
+                fill.price,
+                order_id=fill.maker_order_id,
+                fill_event=event,
+            )
         )
 
     def _process_fills(self, fills: list[Fill], event: int) -> None:
@@ -110,20 +177,36 @@ class MarketSimulator:
             for order_id in tuple(self.agent_orders):
                 if self.book.cancel(order_id, owner="agent"):
                     self.cancels += 1
+                    record = self._quotes_by_order.get(order_id)
+                    if record is not None:
+                        record.cancelled = True
                 self.agent_orders.discard(order_id)
 
             for side, price in ((Side.BUY, quote.bid), (Side.SELL, quote.ask)):
                 if price is None:
                     continue
+                # Queue position is only observable *before* submitting: it is the
+                # integer lot count already resting at this price on our side.
+                queue_ahead = self.book.depth(side, price)
                 order = Order(self._new_id(), "agent", side, quote.size, event, price)
                 submission = self.book.submit(order, post_only=True)
                 self.quotes_sent += 1
-                self._process_fills(submission.fills, event)
                 if submission.resting_order_id is not None:
+                    record = QuoteRecord(
+                        order_id=order.order_id,
+                        side=side.value,
+                        price_ticks=price,
+                        submitted_event=event,
+                        queue_ahead_lots=queue_ahead,
+                        size_lots=quote.size,
+                    )
+                    self.quote_records.append(record)
+                    self._quotes_by_order[order.order_id] = record
                     self.agent_orders.add(order.order_id)
                     self.quotes_accepted += 1
                 elif not submission.accepted:
                     self.post_only_rejections += 1
+                self._process_fills(submission.fills, event)
 
     def _evolve_fundamental(self) -> None:
         draw = self.rng.random()
@@ -200,12 +283,30 @@ class MarketSimulator:
         self.mid_history.append(midpoint)
         while self.pending_markouts and self.pending_markouts[0].due_at <= event:
             markout = self.pending_markouts.popleft()
-            self.markouts.append(markout.side.sign * (midpoint - markout.fill_price))
+            drift = markout.side.sign * (midpoint - markout.fill_price)
+            self.markouts.append(drift)
+            self.markout_records.append(
+                MarkoutRecord(
+                    order_id=markout.order_id,
+                    side=markout.side.value,
+                    fill_price_ticks=markout.fill_price,
+                    fill_event=markout.fill_event,
+                    markout_ticks=drift,
+                )
+            )
         self.pnl_curve.append(self.cash + self.inventory * midpoint)
         self.inventory_curve.append(self.inventory)
         self.max_abs_inventory = max(self.max_abs_inventory, abs(self.inventory))
 
     def run(self) -> dict[str, float | int | str]:
+        """Run the event loop and return the scalar metric dict.
+
+        Kept for backwards compatibility; :meth:`run_detailed` additionally
+        returns the raw curves and records for the analytics layer.
+        """
+        return self.run_detailed().metrics
+
+    def run_detailed(self) -> SimulationResult:
         for event in range(self.config.events):
             self._apply_due_quote(event)
             self._evolve_fundamental()
@@ -219,41 +320,31 @@ class MarketSimulator:
 
         final_mid = self.book.midpoint or self.fundamental
         final_pnl = self.cash + self.inventory * final_mid
-        peak = -math.inf
-        max_drawdown = 0.0
-        for pnl in self.pnl_curve:
-            peak = max(peak, pnl)
-            max_drawdown = max(max_drawdown, peak - pnl)
-        sampled = self.pnl_curve[::100]
-        increments = [
-            current - previous
-            for previous, current in zip(sampled[:-1], sampled[1:], strict=True)
-        ]
-        increment_std = statistics.pstdev(increments) if len(increments) > 1 else 0.0
-        sharpe = (
-            statistics.mean(increments) / increment_std * math.sqrt(len(increments))
-            if increment_std > 0
-            else 0.0
-        )
-        inventory_rms = math.sqrt(
-            sum(value * value for value in self.inventory_curve) / len(self.inventory_curve)
-        )
-        return {
+        # Path statistics are reduced with numpy in analytics.py. The reductions
+        # used there (running max, diff, exact int64 sum of squares, fsum means)
+        # are order-independent, so these aggregates match the scalar loops they
+        # replaced bit for bit.
+        metrics: dict[str, float | int | str] = {
             "strategy": self.strategy.name,
             "events": self.config.events,
             "final_pnl_ticks": final_pnl,
-            "pnl_path_ratio_100_event": sharpe,
-            "max_drawdown_ticks": max_drawdown,
+            "pnl_path_ratio_100_event": analytics.path_ratio(self.pnl_curve, stride=100),
+            "max_drawdown_ticks": analytics.max_drawdown_ticks(self.pnl_curve),
             "ending_inventory": self.inventory,
             "max_abs_inventory": self.max_abs_inventory,
-            "inventory_rms": inventory_rms,
+            "inventory_rms": analytics.inventory_rms(self.inventory_curve),
             "fills": self.fills,
             "filled_quantity": self.filled_quantity,
-            "mean_20_event_markout_ticks": statistics.mean(self.markouts)
-            if self.markouts
-            else 0.0,
+            "mean_20_event_markout_ticks": analytics.fsum_mean(self.markouts),
             "quotes_sent": self.quotes_sent,
             "quote_acceptance_rate": self.quotes_accepted / max(self.quotes_sent, 1),
             "post_only_rejections": self.post_only_rejections,
             "cancels": self.cancels,
         }
+        return SimulationResult(
+            metrics=metrics,
+            pnl_curve=list(self.pnl_curve),
+            inventory_curve=list(self.inventory_curve),
+            quotes=list(self.quote_records),
+            markouts=list(self.markout_records),
+        )
