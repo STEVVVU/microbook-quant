@@ -22,6 +22,11 @@ def main(argv: list[str] | None = None) -> int:
     simulate.add_argument("--quote-interval", type=int, default=20)
     simulate.add_argument("--latency", type=int, default=3)
     simulate.add_argument("--output", default="artifacts")
+    simulate.add_argument(
+        "--artifacts",
+        action="store_true",
+        help="also write parquet analytics tables and matplotlib figures",
+    )
     capture = subparsers.add_parser("capture", help="record the public Kraken L2 feed")
     capture.add_argument("--symbol", default="BTC/USD")
     capture.add_argument("--depth", type=int, default=10)
@@ -33,6 +38,16 @@ def main(argv: list[str] | None = None) -> int:
     replay.add_argument("--symbol", default="BTC/USD")
     replay.add_argument("--depth", type=int, default=10)
     replay.add_argument("--output", default="artifacts/kraken_replay.json")
+    replay.add_argument(
+        "--parquet-dir",
+        default=None,
+        help="also re-encode the capture to columnar parquet in this directory",
+    )
+    replay.add_argument(
+        "--figure",
+        default=None,
+        help="also write a microstructure figure (spread, imbalance, latency) to this path",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "simulate":
@@ -44,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
                 latency=args.latency,
             ),
             output_dir=args.output,
+            write_artifacts=args.artifacts,
         )
         print(json.dumps(result, indent=2, sort_keys=True))
     elif args.command == "capture":
@@ -63,6 +79,16 @@ def main(argv: list[str] | None = None) -> int:
             symbol=args.symbol,
             depth=args.depth,
             output=args.output,
+            parquet_dir=args.parquet_dir,
         )
+        if args.figure is not None:
+            if args.parquet_dir is None:
+                parser.error("--figure requires --parquet-dir")
+            import pandas as pd
+
+            from .plots import plot_capture_microstructure
+
+            top_of_book = pd.read_parquet(result["parquet"]["top_of_book"])
+            plot_capture_microstructure(top_of_book, args.figure)
         print(json.dumps(result, indent=2, sort_keys=True))
     return 0
