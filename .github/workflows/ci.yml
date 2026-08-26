@@ -9,13 +9,45 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.12"]
+        # 3.11 is the floor: numpy >= 2.1 and pandas >= 2.2 both dropped 3.10.
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install -e ".[dev]"
+      # Recorded so a resolved-version change is visible in the log when a
+      # numeric result moves.
+      - run: python -m pip list
       - run: ruff check .
       - run: pytest
 
+      # End-to-end run against the committed capture. Revalidates every exchange
+      # CRC32, re-encodes to columnar parquet, and renders the figure headlessly.
+      - name: replay the committed Kraken capture
+        run: |
+          python -m microbook replay artifacts/kraken_l2_sample.jsonl.gz \
+            --parquet-dir "$RUNNER_TEMP/columnar" \
+            --figure "$RUNNER_TEMP/kraken_microstructure.png" \
+            --output "$RUNNER_TEMP/kraken_replay.json"
+
+      # The guard against stale documentation: fails if any number quoted in the
+      # README no longer matches what the pipeline actually measures.
+      - name: check the README figures still match the replay
+        run: python scripts/check_documented_metrics.py "$RUNNER_TEMP/kraken_replay.json"
+
+      - name: run the seeded strategy comparison
+        run: |
+          python -m microbook simulate --events 30000 --seed 31 \
+            --output "$RUNNER_TEMP/artifacts" --artifacts
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.python-version == '3.13'
+        with:
+          name: figures
+          path: |
+            ${{ runner.temp }}/kraken_microstructure.png
+            ${{ runner.temp }}/artifacts/*.png
