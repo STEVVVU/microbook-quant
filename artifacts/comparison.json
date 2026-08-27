@@ -40,5 +40,107 @@
     "quotes_sent": 3000,
     "strategy": "inventory_aware"
   },
-  "inventory_risk_reduction": 0.6190476190476191
+  "inventory_risk_reduction": 0.6190476190476191,
+  "queue_position": {
+    "fixed_spread": [
+      {
+        "fill_probability": 0.8,
+        "filled_lots": 8,
+        "filled_orders": 4,
+        "mean_markout_ticks": -0.75,
+        "orders": 5,
+        "queue_bucket": "0"
+      },
+      {
+        "fill_probability": 0.6666666666666666,
+        "filled_lots": 7,
+        "filled_orders": 4,
+        "mean_markout_ticks": 0.875,
+        "orders": 6,
+        "queue_bucket": "1-2"
+      },
+      {
+        "fill_probability": 0.75,
+        "filled_lots": 17,
+        "filled_orders": 9,
+        "mean_markout_ticks": 0.5,
+        "orders": 12,
+        "queue_bucket": "3-5"
+      },
+      {
+        "fill_probability": 0.3103448275862069,
+        "filled_lots": 18,
+        "filled_orders": 9,
+        "mean_markout_ticks": -0.7222222222222222,
+        "orders": 29,
+        "queue_bucket": "6-11"
+      },
+      {
+        "fill_probability": 0.11764705882352941,
+        "filled_lots": 19,
+        "filled_orders": 10,
+        "mean_markout_ticks": -0.5,
+        "orders": 85,
+        "queue_bucket": "12-24"
+      },
+      {
+        "fill_probability": 0.0,
+        "filled_lots": 0,
+        "filled_orders": 0,
+        "mean_markout_ticks": 0.0,
+        "orders": 2863,
+        "queue_bucket": "25+"
+      }
+    ],
+    "inventory_aware": [
+      {
+        "fill_probability": 1.0,
+        "filled_lots": 8,
+        "filled_orders": 4,
+        "mean_markout_ticks": -0.375,
+        "orders": 4,
+        "queue_bucket": "0"
+      },
+      {
+        "fill_probability": 0.6,
+        "filled_lots": 5,
+        "filled_orders": 3,
+        "mean_markout_ticks": 1.3333333333333333,
+        "orders": 5,
+        "queue_bucket": "1-2"
+      },
+      {
+        "fill_probability": 0.6666666666666666,
+        "filled_lots": 15,
+        "filled_orders": 8,
+        "mean_markout_ticks": 0.03125,
+        "orders": 12,
+        "queue_bucket": "3-5"
+      },
+      {
+        "fill_probability": 0.3103448275862069,
+        "filled_lots": 18,
+        "filled_orders": 9,
+        "mean_markout_ticks": -0.6666666666666666,
+        "orders": 29,
+        "queue_bucket": "6-11"
+      },
+      {
+        "fill_probability": 0.12162162162162163,
+        "filled_lots": 16,
+        "filled_orders": 9,
+        "mean_markout_ticks": -0.3333333333333333,
+        "orders": 74,
+        "queue_bucket": "12-24"
+      },
+      {
+        "fill_probability": 0.0,
+        "filled_lots": 0,
+        "filled_orders": 0,
+        "mean_markout_ticks": 0.0,
+        "orders": 2876,
+        "queue_bucket": "25+"
+      }
+    ]
+  }
 }

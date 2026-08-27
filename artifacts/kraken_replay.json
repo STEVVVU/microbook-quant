@@ -17,7 +17,7 @@
   "market": {
     "aggressor_buy_trades": 9,
     "aggressor_sell_trades": 13,
-    "depth_imbalance_mean": -0.5335132040751039,
+    "depth_imbalance_mean": -0.5335132040751038,
     "latency_ms_p50": 79.30282,
     "latency_ms_p95": 94.5170672,
     "midpoint_change_rms_ticks": 2.0416483037572295,
@@ -29,5 +29,10 @@
     "traded_notional_usd": 8533.146950703,
     "traded_quantity": 0.13212592,
     "updates_per_second": 20.18908899532869
+  },
+  "parquet": {
+    "book": "artifacts\\columnar\\book.parquet",
+    "top_of_book": "artifacts\\columnar\\top_of_book.parquet",
+    "trade": "artifacts\\columnar\\trade.parquet"
   }
 }

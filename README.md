@@ -23,9 +23,15 @@ carried, and whether a fill was followed by adverse price movement.
 - **Market-making research:** a fixed-spread baseline versus an
   Avellaneda-Stoikov-inspired reservation-price strategy.
 - **Execution analytics:** maker rebates, 20-event markouts, fill quantity,
-  quote acceptance, inventory RMS, peak inventory, drawdown, and marked PnL.
+  quote acceptance, inventory RMS, peak inventory, drawdown, and marked PnL,
+  reduced with numpy/pandas.
+- **Queue-position research:** per-quote records of how many lots were resting
+  ahead at submit time, joined against realized fills and post-fill markouts.
+- **Columnar storage:** captures re-encode to parquet via pyarrow for analysis,
+  alongside the gzip JSONL that stays the authoritative record.
 - **Reproducibility:** deterministic replay revalidates checksums, book
-  invariants, latency, spread, depth imbalance, and trade statistics.
+  invariants, latency, spread, depth imbalance, and trade statistics; CI fails
+  if any figure quoted below stops matching the pipeline.
 
 ## Resume highlights
 
@@ -34,10 +40,20 @@ carried, and whether a fill was followed by adverse price movement.
 - Integrated Kraken's public BTC/USD feed and replayed **1,829 real L2 and
   trade events** with **1,807 verified checksums** and zero crossed-book states.
 - Modeled queue position, order latency, maker rebates, inventory exposure,
-  drawdown, and post-fill price movement instead of assuming instant fills.
+  drawdown, and post-fill price movement instead of assuming instant fills;
+  measuring fill probability **decline monotonically with queue depth** (1.00 at
+  the front of the queue to 0.00 past 25 lots deep on the seeded path), with
+  negative post-fill markouts on most filled buckets.
 - Compared two market-making policies over 30,000 seeded events; the
   inventory-aware policy reduced peak inventory by **61.9%** and simulated
   maximum drawdown by **76.6%**.
+- Kept the matching engine exact integer-tick arithmetic while moving analytics
+  to numpy/pandas/pyarrow, verifying the migration left every published figure
+  bitwise unchanged except one documented 1-ulp diagnostic, and that results are
+  bit-identical across Python 3.11/numpy 2.4 and 3.13/numpy 2.5.
+- Cross-validated fill logic against an independently written reference engine
+  over a 4,000-event randomized fuzz (identical fills and top-of-book after
+  every event).
 
 ## Real-feed evidence
 
@@ -52,8 +68,16 @@ trade data recorded on July 16, 2026.
 | Exchange CRC32s verified | **1,807** |
 | Crossed-book states | **0** |
 | Update throughput | 20.19 events/sec |
-| Spread, p50 / p95 | 1 / 1 tick |
+| Spread, p50 / p95 / max | 1 / 1 / 117 ticks |
 | Receive latency, p50 / p95 | 79.30 / 94.52 ms |
+| Mean depth imbalance | -0.534 |
+| Midpoint change RMS | 2.04 ticks |
+| Traded quantity / notional | 0.13212592 BTC / $8,533.15 |
+
+Every figure in this table is asserted by
+[`scripts/check_documented_metrics.py`](scripts/check_documented_metrics.py),
+which CI runs against a freshly replayed capture — so these numbers cannot go
+stale without breaking the build.
 
 [`artifacts/kraken_l2_sample.jsonl.gz`](artifacts/kraken_l2_sample.jsonl.gz)
 is identified by SHA-256
@@ -81,8 +105,9 @@ latent fundamental ----> external limit / market order flow
 
 ## Simulated strategy experiment
 
-Python 3.11, 30,000 events, seed 31, quote refresh every 20 events,
-three-event action latency.
+30,000 events, seed 31, quote refresh every 20 events, three-event action
+latency. Reproduce with
+`python -m microbook simulate --events 30000 --seed 31 --output artifacts --artifacts`.
 
 | Metric | Fixed spread | Inventory aware |
 | --- | ---: | ---: |
@@ -101,14 +126,134 @@ larger directional exposure. No simulated PnL is presented as live performance.
 The checked-in [`artifacts/comparison.json`](artifacts/comparison.json) contains
 the full result, including quote acceptance and post-fill markouts.
 
+![Simulated marked PnL, drawdown and inventory](artifacts/pnl_inventory.png)
+
+## Queue position drives fills and adverse selection
+
+Every agent quote that rests on the book records how many lots were already
+ahead of it in its FIFO queue at submit time. That number is only knowable at
+submission, so it is captured by the event loop and reduced afterwards in pandas.
+Inventory-aware policy, same 30,000-event seeded path:
+
+| Lots ahead in queue | Quotes | Filled | Fill probability | Mean 20-event markout (ticks) |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 4 | 4 | 1.000 | -0.375 |
+| 1-2 | 5 | 3 | 0.600 | +1.333 |
+| 3-5 | 12 | 8 | 0.667 | +0.031 |
+| 6-11 | 29 | 9 | 0.310 | -0.667 |
+| 12-24 | 74 | 9 | 0.122 | -0.333 |
+| 25+ | 2,876 | 0 | 0.000 | n/a |
+
+![Queue position vs fill probability and markout](artifacts/queue_position_fill_probability.png)
+
+Fill probability falls monotonically once there are more than a handful of lots
+ahead, and past 25 lots deep nothing fills at all on this path — which is why
+2,876 of the 3,000 quotes never trade. The small-sample buckets (n=4, n=5) carry
+wide error bars and should not be read as a sign that joining an empty level is
+free; the honest reading is that fills concentrate at the front of the queue and
+that most of the filled buckets show a *negative* markout, i.e. the midpoint
+moved against the maker after the fill.
+
+## Numerics: integers in the book, numpy in the analysis
+
+This split is deliberate and is the one architectural line in the project.
+
+**The matching engine and the event loop are integer and scalar.**
+[`src/microbook/book.py`](src/microbook/book.py) is pure-stdlib: prices are
+integer ticks, sizes are integer lots, and events are sequenced one at a time.
+That is not an un-optimized leftover:
+
+- Price-time priority, queue position and partial fills are *order dependent*.
+  There is no correct way to vectorize "which resting order was the maker"
+  across events, because the answer to each event depends on the previous one.
+- Float prices make tick comparisons ambiguous. "Is this order at the touch?"
+  and "would this post-only quote cross?" are exact integer comparisons; a
+  1-ulp error there silently changes which order is the maker and therefore who
+  earned the rebate.
+
+**The analytics layer is vectorized.**
+[`src/microbook/analytics.py`](src/microbook/analytics.py) consumes what a run
+recorded — PnL curves, per-quote records, markouts, per-event book observations —
+and reduces them with numpy/pandas. That is where vectorization actually pays.
+
+**Where money is summed, summation is order-independent.** Aggregates over
+monetary quantities use `math.fsum` (exactly rounded, so permutation-invariant)
+rather than a pairwise numpy reduction whose result depends on array chunking.
+`np.maximum.accumulate` and `np.diff` are used freely, because they perform
+selection and one subtraction per element and are therefore bitwise identical to
+the equivalent scalar loop. Inventory RMS sums squares in exact `int64` before
+the single final divide.
+
+Migrating the analytics to numpy left **every** published figure bitwise
+unchanged, with one exception: `depth_imbalance_mean` moved by 1 ulp
+(`-0.5335132040751039` to `-0.5335132040751038`) because `statistics.mean` sums
+via exact rationals while `math.fsum` rounds once at the end. It is a
+dimensionless diagnostic statistic, not money, so the `fsum` result is kept for
+order-independence and the tolerance is pinned in
+[`scripts/check_documented_metrics.py`](scripts/check_documented_metrics.py).
+`tests/test_analytics.py` locks each vectorized reduction to the scalar stdlib
+result it replaced.
+
+The payoff is portability of results: the full pipeline was run under Python
+3.11 / numpy 2.4.6 and Python 3.13 / numpy 2.5.1 and produced **bit-identical**
+output, including the strategy comparison and every queue-position bucket.
+
+## Storage: JSONL for capture, parquet for analysis
+
+`gzip` JSONL remains the **capture** format: append-only, one self-describing
+record per line, survives a truncated write, and — critically — preserves the
+exact decimal quantity *strings* Kraken sent. The CRC32 is computed over those
+strings, so round-tripping a quantity through a float would break checksum
+reproduction.
+
+Parquet is the **analysis** format, written by
+[`src/microbook/storage.py`](src/microbook/storage.py): columnar, typed, and
+directly loadable into pandas. Prices cross into parquet as `int64` ticks, never
+floats; timestamps stay `int64` nanoseconds. Quantities keep their original
+string form with a derived `float64` column alongside for convenience, so a book
+image read back out of parquet still reproduces the exchange checksum — asserted
+by `tests/test_storage.py`.
+
+On this 1,829-event sample the three parquet files total 129 KB against the
+43 KB gzip JSONL: parquet is *larger* here, because per-column dictionaries and
+metadata dominate at this size and the top-of-book table is derived data the
+JSONL does not carry. The columnar win is in typed zero-parse loading and
+predicate pushdown, and in compression only at sizes far above a 90-second
+sample. Parquet output is gitignored and regenerated on demand.
+
+## Validation against an independent engine
+
+`tests/test_matching_reference.py` cross-checks the matching engine against a
+deliberately naive reference book written independently of `book.py` — a flat
+list of resting orders scanned in `(price, arrival)` order. It is far too slow
+to be the engine, which is exactly what makes it a useful oracle: it shares no
+code, no data structures and no optimizations with the implementation. A 4,000-
+event randomized fuzz (limit and market orders, cancels, multi-level sweeps)
+asserts identical fills and identical top-of-book after **every** event.
+
+`nautilus_trader` was evaluated for this role and rejected: its matching engine
+is no longer an importable Python module (it moved to a Rust/pyo3 extension), so
+there is nothing to call at the fill-logic level without standing up a full
+backtest node, and it pins `pandas<3.0.0`, which would downgrade the pandas this
+project resolves.
+
 ## Run it
 
-Synthetic simulation and replay have no runtime dependencies.
+Requires Python 3.11+ (numpy 2.1 and pandas 2.2 both dropped 3.10).
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m microbook replay artifacts/kraken_l2_sample.jsonl.gz
-python -m microbook --events 30000 --seed 31 --output artifacts
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev]"
+```
+
+```powershell
+# Revalidate the committed capture; optionally emit parquet and a figure.
+python -m microbook replay artifacts/kraken_l2_sample.jsonl.gz `
+  --parquet-dir artifacts/columnar `
+  --figure artifacts/kraken_microstructure.png
+
+# Seeded paired strategy comparison; --artifacts adds parquet + figures.
+python -m microbook simulate --events 30000 --seed 31 --output artifacts --artifacts
 ```
 
 To record a fresh public sample:
@@ -121,26 +266,55 @@ microbook capture --symbol "BTC/USD" --depth 10 --seconds 90
 For development:
 
 ```powershell
-python -m pip install -e ".[dev]"
 pytest
 ruff check .
+python scripts/check_documented_metrics.py artifacts/kraken_replay.json
 ```
+
+### Dependencies
+
+Runtime dependencies cover the **analysis** layer only. The matching engine and
+the simulator event loop are pure stdlib by design — see "Numerics" above.
+
+| Package | Constraint | Used for |
+| --- | --- | --- |
+| numpy | `>=2.1` | vectorized path/percentile/histogram reductions |
+| pandas | `>=2.2` | quote, markout and queue-position frames |
+| pyarrow | `>=17` | columnar parquet capture and run output |
+| matplotlib | `>=3.9` | figures in `artifacts/` (headless `Agg`) |
+| scipy | `>=1.14` | statistical helpers on the analysis side |
+| websockets | `>=13` (`[live]`) | live Kraken v2 feed |
+| pytest, ruff | `[dev]` | tests and lint |
+
+Resolved on Python 3.11.9 at the time of writing: numpy 2.4.6, pandas 3.0.5,
+pyarrow 25.0.0, matplotlib 3.11.1, scipy 1.17.1.
 
 ## Repository map
 
 ```text
 src/microbook/
-  book.py        matching engine and invariants
+  book.py        matching engine and invariants   <- integer ticks, pure stdlib
+  simulator.py   exchange event loop, latency, accounting, markouts  <- scalar
+  strategy.py    fixed and inventory-aware quote policies
   feeds/
     kraken.py    normalized events and CRC32 book reconstruction
     kraken_recorder.py atomic public WebSocket recorder
     coinbase.py  authenticated Coinbase L2 normalization
   replay.py      deterministic integrity and microstructure analytics
-  simulator.py   exchange event loop, latency, accounting, markouts
-  strategy.py    fixed and inventory-aware quote policies
+  analytics.py   vectorized reductions            <- numpy / pandas
+  storage.py     columnar parquet schemas + writers  <- pyarrow
+  plots.py       matplotlib figures
   experiment.py  reproducible paired comparison
-tests/            FIFO, partial fill, cancellation, latency, and risk tests
+scripts/
+  check_documented_metrics.py  fails CI if a README figure goes stale
+tests/            FIFO, partial fill, cancellation, latency, risk, parity,
+                  parquet round-trip, and reference-engine fuzz tests
 ```
+
+The `<-` annotations mark the integer/float boundary: `book.py`, `simulator.py`
+and the feed normalizers do exact integer arithmetic, while `analytics.py`,
+`storage.py` and `plots.py` do floating-point aggregation of already-recorded
+results.
 
 ## Modeling choices
 
@@ -152,6 +326,12 @@ order flow but is never visible to either strategy.
 The `pnl_path_ratio_100_event` field is
 `sqrt(N) * mean(increment) / std(increment)` on 100-event marked-PnL
 increments. It is a path-comparison statistic, not an annualized Sharpe ratio.
+
+Queue-position buckets are left-closed, so "joined an empty level" (zero lots
+ahead) is its own bucket rather than being merged into "1-2". The two smallest
+buckets hold single-digit sample counts on a 30,000-event path; the per-bucket
+`orders` column is reported alongside every probability so the reader can see
+which cells are thin.
 
 ## Research context
 
