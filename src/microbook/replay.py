@@ -67,6 +67,11 @@ def replay_kraken_capture(
     first_received_ns: int | None = None
     last_received_ns: int | None = None
     top_of_book_changes = 0
+    # Counted, not assumed. ``KrakenBook.apply`` already raises on a crossed book,
+    # so this stays 0 on a clean capture -- but it is an independent observation of
+    # each reconstructed top of book rather than a hardcoded zero, so the reported
+    # figure is something the replay actually measured.
+    crossed_book_states = 0
     previous_top: tuple[int, int] | None = None
     buy_trades = 0
     sell_trades = 0
@@ -94,6 +99,7 @@ def replay_kraken_capture(
                 top = (book.best_bid, book.best_ask)
                 top_of_book_changes += int(previous_top is not None and top != previous_top)
                 previous_top = top
+                crossed_book_states += int(book.best_bid >= book.best_ask)
                 spread_ticks = book.best_ask - book.best_bid
                 midpoint_ticks = (book.best_bid + book.best_ask) / 2.0
                 spreads.append(float(spread_ticks))
@@ -155,7 +161,7 @@ def replay_kraken_capture(
             "updates": counts["update"],
             "trades": counts["trade"],
             "checksums_verified": book.checksums_verified,
-            "crossed_book_states": 0,
+            "crossed_book_states": crossed_book_states,
         },
         "market": {
             "updates_per_second": counts["update"] / max(duration_seconds, 1e-12),
@@ -191,9 +197,15 @@ def replay_kraken_capture(
     if output is not None:
         destination = Path(output)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        # newline="\n" pins LF on every platform. Without it Windows text mode
+        # rewrites each \n as \r\n, so the same deterministic replay emits
+        # different bytes on Windows and Linux -- which would make a
+        # byte-for-byte `git diff --exit-code` check on this committed artifact
+        # depend on the developer's core.autocrlf setting rather than the code.
         destination.write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
+            newline="\n",
         )
     return result
 

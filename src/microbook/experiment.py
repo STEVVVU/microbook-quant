@@ -89,8 +89,12 @@ def run_comparison(
     if output_dir is not None:
         destination = Path(output_dir)
         destination.mkdir(parents=True, exist_ok=True)
+        # newline="\n" so the artifact is byte-identical on Windows and Linux;
+        # see the same note in replay.py.
         (destination / "comparison.json").write_text(
-            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(result, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
         )
         if write_artifacts:
             curves = {
