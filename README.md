@@ -1,7 +1,8 @@
-# MicroBook Quant
+# Limit Order Book Simulator
 
-A queue- and latency-aware market-making research environment built around a
-price-time-priority matching engine and checksum-verified real exchange data.
+A deterministic exchange simulator that models order matching, partial fills,
+cancellations, queue position, and configurable order latency using real
+exchange data.
 
 Most portfolio backtests assume a fill when a bar touches a price. MicroBook
 models the harder questions: how much quantity was ahead in the queue, whether
