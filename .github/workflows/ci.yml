@@ -34,15 +34,31 @@ jobs:
             --figure "$RUNNER_TEMP/kraken_microstructure.png" \
             --output "$RUNNER_TEMP/kraken_replay.json"
 
-      # The guard against stale documentation: fails if any number quoted in the
-      # README no longer matches what the pipeline actually measures.
-      - name: check the README figures still match the replay
-        run: python scripts/check_documented_metrics.py "$RUNNER_TEMP/kraken_replay.json"
-
       - name: run the seeded strategy comparison
         run: |
           python -m microbook simulate --events 30000 --seed 31 \
             --output "$RUNNER_TEMP/artifacts" --artifacts
+
+      # The guard against stale documentation: fails if any number quoted in the
+      # README no longer matches what the pipeline actually measures. Both results
+      # are passed, so the two resume-headline percentages are covered as well.
+      - name: check the README figures still match the pipeline
+        run: |
+          python scripts/check_documented_metrics.py \
+            "$RUNNER_TEMP/kraken_replay.json" \
+            "$RUNNER_TEMP/artifacts/comparison.json"
+
+      # The committed comparison artifact must be reproducible byte-for-byte. That
+      # is what the pinned newline="\n" in the writer plus .gitattributes make
+      # true; on a Linux runner this also catches a CRLF artifact committed from
+      # Windows. Scoped to comparison.json deliberately: kraken_replay.json embeds
+      # os.sep-joined capture/parquet paths, so its bytes are platform-dependent
+      # by construction (its *numbers* are guarded by the step above), and the
+      # committed .png figures are not byte-reproducible across matplotlib builds.
+      - name: committed comparison artifact matches a fresh run byte-for-byte
+        run: |
+          python -m microbook simulate --events 30000 --seed 31 --output artifacts
+          git diff --exit-code -- artifacts/comparison.json
 
       - uses: actions/upload-artifact@v4
         if: matrix.python-version == '3.13'
