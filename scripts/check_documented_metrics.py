@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -90,6 +91,52 @@ EXPECTED_HEADLINE_PERCENTS: tuple[tuple[str, float, float, float], ...] = (
     ("drawdown_reduction", 0.7660343168215893, 1e-12, 76.6),
 )
 
+# The queue-position series quoted in the README: the resume bullet and the
+# "Queue position drives fills and adverse selection" table both read the
+# inventory_aware policy, so that is the series named in the prose and the one
+# checked here. The fixed_spread series is deliberately NOT the documented one --
+# its buckets differ (its front bucket is 0.8, not 1.00), which is exactly why the
+# prose has to say which series it is quoting.
+QUEUE_POSITION_SERIES = "inventory_aware"
+
+# (queue_bucket, orders, filled_orders, fill_probability, mean_markout_ticks).
+# Counts are exact; the two statistics carry the usual fsum tolerance. Every row
+# is a value the README table prints, so drift here is a README defect.
+EXPECTED_QUEUE_POSITION: tuple[tuple[str, int, int, float, float], ...] = (
+    ("0", 4, 4, 1.0, -0.375),
+    ("1-2", 5, 3, 0.6, 1.3333333333333333),
+    ("3-5", 12, 8, 0.6666666666666666, 0.03125),
+    ("6-11", 29, 9, 0.3103448275862069, -0.6666666666666666),
+    ("12-24", 74, 9, 0.12162162162162163, -0.3333333333333333),
+    ("25+", 2876, 0, 0.0, 0.0),
+)
+
+# The prose claim about the *shape* of that series, asserted as a property rather
+# than as numbers, so it keeps holding if the seeded path is ever regenerated.
+#
+# The README used to claim the decline was monotonic. It never was: the 3-5 bucket
+# sits above the 1-2 bucket, and the README's own table three sections lower
+# printed those true values, so the document contradicted itself. The prose now
+# says "a strong decline, but not monotone", monotone from the 3-5 bucket down.
+# Both halves of that are checked below, in both directions:
+#
+#   * if the data ever becomes monotone, the "not monotone" prose goes stale and
+#     this fails -- an understated claim is still a wrong claim;
+#   * if the tail ever stops declining, the narrower claim fails too;
+#   * and any prose that re-asserts monotonicity fails on the text itself, which
+#     is what actually caught nothing before this guard existed.
+QUEUE_MONOTONE_FROM_BUCKET = "3-5"
+
+# The bullet's endpoints, as the README renders them. Checking the literal string
+# is what ties the prose to the artifact: the old bullet said "1.00 at the front"
+# while quoting a series whose front bucket was 0.8.
+QUEUE_ENDPOINT_PROSE = "**1.00 at the front of the queue to 0.00 past 25 lots deep**"
+
+# Any surviving positive monotonicity claim. "not monotone" is fine; "falls
+# monotonically" is not.
+MONOTONE_WORD = re.compile(r"monoton\w*", re.IGNORECASE)
+NEGATED_BEFORE = re.compile(r"\bnot\W{0,3}$", re.IGNORECASE)
+
 
 README = Path(__file__).resolve().parent.parent / "README.md"
 
@@ -112,6 +159,110 @@ def _check_readme_prints(percent: float, failures: list[str]) -> None:
             f"README.md contains {needle} {occurrences} time(s), expected 2 "
             "(resume highlights + simulated strategy experiment)"
         )
+
+
+def _check_queue_position(comparison: dict, failures: list[str]) -> int:
+    """Check the documented queue-position series and the prose claims about it.
+
+    Three separate things are verified, because the bug this guards against had
+    three separate parts: a wrong front-bucket number, a monotonicity claim the
+    data never supported, and a README that disagreed with its own table.
+
+    Returns the number of assertions performed so ``main`` can report a count.
+    """
+    series = comparison["queue_position"][QUEUE_POSITION_SERIES]
+    by_bucket = {row["queue_bucket"]: row for row in series}
+    checked = 0
+
+    # 1. Every value the README table prints.
+    for bucket, orders, filled, probability, markout in EXPECTED_QUEUE_POSITION:
+        checked += 4
+        row = by_bucket.get(bucket)
+        if row is None:
+            failures.append(
+                f"queue_position.{QUEUE_POSITION_SERIES}: bucket {bucket!r} is missing "
+                f"(got {sorted(by_bucket)})"
+            )
+            continue
+        prefix = f"queue_position.{QUEUE_POSITION_SERIES}[{bucket}]"
+        if row["orders"] != orders:
+            failures.append(f"{prefix}.orders: expected {orders}, got {row['orders']}")
+        if row["filled_orders"] != filled:
+            failures.append(
+                f"{prefix}.filled_orders: expected {filled}, got {row['filled_orders']}"
+            )
+        for metric, expected in (
+            ("fill_probability", probability),
+            ("mean_markout_ticks", markout),
+        ):
+            actual = row[metric]
+            if not math.isclose(actual, expected, abs_tol=1e-12, rel_tol=0.0):
+                failures.append(f"{prefix}.{metric}: expected {expected}, got {actual}")
+
+    # 2. The shape claim: not monotone overall, monotone from QUEUE_MONOTONE_FROM_BUCKET
+    #    down. Asserted as a property of the data, so it survives a regenerated path.
+    probabilities = [row["fill_probability"] for row in series]
+    checked += 2
+    if all(b <= a for a, b in zip(probabilities, probabilities[1:])):
+        failures.append(
+            f"queue_position.{QUEUE_POSITION_SERIES}.fill_probability is now monotone "
+            f"non-increasing ({probabilities}), but the README says it is not -- "
+            "the prose is understating the result and must be updated"
+        )
+    buckets = [row["queue_bucket"] for row in series]
+    if QUEUE_MONOTONE_FROM_BUCKET not in buckets:
+        failures.append(
+            f"queue_position.{QUEUE_POSITION_SERIES}: bucket "
+            f"{QUEUE_MONOTONE_FROM_BUCKET!r} is missing, so the README's "
+            "'uninterrupted from the 3-5 bucket down' claim cannot be checked"
+        )
+    else:
+        tail = probabilities[buckets.index(QUEUE_MONOTONE_FROM_BUCKET) :]
+        if not all(b <= a for a, b in zip(tail, tail[1:])):
+            failures.append(
+                f"queue_position.{QUEUE_POSITION_SERIES}.fill_probability no longer "
+                f"declines without interruption from the {QUEUE_MONOTONE_FROM_BUCKET} "
+                f"bucket down ({tail}); the README claims it does"
+            )
+
+    if not README.exists():  # running the script outside a checkout
+        return checked
+    text = README.read_text(encoding="utf-8")
+
+    # 3. The prose itself. The endpoints the bullet prints have to be the endpoints
+    #    of the series it names, and no surviving sentence may claim monotonicity.
+    checked += 3
+    front = probabilities[0]
+    back = probabilities[-1]
+    expected_prose = f"**{front:.2f} at the front of the queue to {back:.2f} past 25 lots deep**"
+    if expected_prose != QUEUE_ENDPOINT_PROSE:
+        failures.append(
+            f"queue_position.{QUEUE_POSITION_SERIES}: endpoints are now {front} and "
+            f"{back}, so the README bullet should read {expected_prose!r}, not "
+            f"{QUEUE_ENDPOINT_PROSE!r}"
+        )
+    if text.count(QUEUE_ENDPOINT_PROSE) != 1:
+        failures.append(
+            f"README.md contains {QUEUE_ENDPOINT_PROSE!r} "
+            f"{text.count(QUEUE_ENDPOINT_PROSE)} time(s), expected 1 (resume highlights)"
+        )
+    if QUEUE_POSITION_SERIES not in text:
+        failures.append(
+            f"README.md never names the {QUEUE_POSITION_SERIES!r} series, so a reader "
+            "cannot tell which of the two policies the quoted fill probabilities are"
+        )
+
+    for match in MONOTONE_WORD.finditer(text):
+        checked += 1
+        if not NEGATED_BEFORE.search(text[max(0, match.start() - 24) : match.start()]):
+            line = text.count("\n", 0, match.start()) + 1
+            failures.append(
+                f"README.md:{line} asserts {match.group(0)!r} without negation; the "
+                f"measured {QUEUE_POSITION_SERIES} fill probabilities are "
+                f"{probabilities}, which are not monotone"
+            )
+
+    return checked
 
 
 def _check_table(
@@ -170,6 +321,7 @@ def main(argv: list[str]) -> int:
                     f"pipeline now measures {actual_percent}%"
                 )
             _check_readme_prints(readme_percent, failures)
+        checked += _check_queue_position(comparison, failures)
 
     if failures:
         print("Documented metrics no longer match the pipeline result:", file=sys.stderr)

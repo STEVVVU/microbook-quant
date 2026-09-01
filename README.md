@@ -40,10 +40,12 @@ carried, and whether a fill was followed by adverse price movement.
 - Integrated Kraken's public BTC/USD feed and replayed **1,829 real L2 and
   trade events** with **1,807 verified checksums** and zero crossed-book states.
 - Modeled queue position, order latency, maker rebates, inventory exposure,
-  drawdown, and post-fill price movement instead of assuming instant fills;
-  measuring fill probability **decline monotonically with queue depth** (1.00 at
-  the front of the queue to 0.00 past 25 lots deep on the seeded path), with
-  negative post-fill markouts on most filled buckets.
+  drawdown, and post-fill price movement instead of assuming instant fills; on
+  the seeded path the `inventory_aware` policy's fill probability falls from
+  **1.00 at the front of the queue to 0.00 past 25 lots deep** — a strong
+  decline, but not monotone: the 3-5-lot bucket (0.667, n=12) sits above the
+  1-2-lot bucket (0.600, n=5). The fall is uninterrupted from the 3-5 bucket
+  down, and most filled buckets show a negative post-fill markout.
 - Compared two market-making policies over 30,000 seeded events; the
   inventory-aware policy reduced peak inventory by **61.9%** and simulated
   maximum drawdown by **76.6%**.
@@ -146,13 +148,16 @@ Inventory-aware policy, same 30,000-event seeded path:
 
 ![Queue position vs fill probability and markout](artifacts/queue_position_fill_probability.png)
 
-Fill probability falls monotonically once there are more than a handful of lots
-ahead, and past 25 lots deep nothing fills at all on this path — which is why
-2,876 of the 3,000 quotes never trade. The small-sample buckets (n=4, n=5) carry
-wide error bars and should not be read as a sign that joining an empty level is
-free; the honest reading is that fills concentrate at the front of the queue and
-that most of the filled buckets show a *negative* markout, i.e. the midpoint
-moved against the maker after the fill.
+Fill probability declines strongly with queue depth, but it is *not* monotone
+across every bucket: the 3-5 bucket (0.667) is above the 1-2 bucket (0.600),
+because those shallow buckets hold 5 and 12 quotes respectively and a single fill
+moves them several points. From the 3-5 bucket downwards the decline is
+uninterrupted, and past 25 lots deep nothing fills at all on this path — which is
+why 2,876 of the 3,000 quotes never trade. The small-sample buckets (n=4, n=5)
+carry wide error bars and should not be read as a sign that joining an empty
+level is free; the honest reading is that fills concentrate at the front of the
+queue and that most of the filled buckets show a *negative* markout, i.e. the
+midpoint moved against the maker after the fill.
 
 ## Numerics: integers in the book, numpy in the analysis
 
