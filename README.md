@@ -287,12 +287,11 @@ the simulator event loop are pure stdlib by design — see "Numerics" above.
 | pandas | `>=2.2` | quote, markout and queue-position frames |
 | pyarrow | `>=17` | columnar parquet capture and run output |
 | matplotlib | `>=3.9` | figures in `artifacts/` (headless `Agg`) |
-| scipy | `>=1.14` | statistical helpers on the analysis side |
 | websockets | `>=13` (`[live]`) | live Kraken v2 feed |
 | pytest, ruff | `[dev]` | tests and lint |
 
 Resolved on Python 3.11.9 at the time of writing: numpy 2.4.6, pandas 3.0.5,
-pyarrow 25.0.0, matplotlib 3.11.1, scipy 1.17.1.
+pyarrow 25.0.0, matplotlib 3.11.1.
 
 ## Repository map
 
